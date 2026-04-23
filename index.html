@@ -5641,7 +5641,7 @@ ${npcContext}
                     btn.onclick = () => {
                         openImageSelectorModal('daily', (img) => {
                             pendingFeiboImage = img;
-                            document.getElementById('multiPromptInput_2').value = img.url;
+                            document.getElementById('multiPromptInput_2').value = '[图片] ' + img.desc;
                             btn.innerText = '✅ 已选择图片：' + img.desc;
                             btn.style.background = '#2b9348';
                         });
@@ -7536,6 +7536,7 @@ ${npcContext}
                     npc.isFriend = false;
                     npc.chatHistory = [];
                     closeFeixinChat();
+                    saveGame('auto', true);
                     showUiAlert(`已将 ${npc.name} 删除。`);
                 }
             });
@@ -10942,6 +10943,8 @@ stats 是一个对象，包含以下数值（请根据角色身份合理赋初�
 
         function addAlbumImage() {
             let promptTitle, promptDesc, fields, urlInputIndex, nameInputIndex;
+            let uploadedImages = []; // 用于暂存本地上传的 base64 字符串
+            
             if (currentAlbumTab === 'avatar') {
                 promptTitle = "上传头像";
                 promptDesc = "输入图片链接并选择性别 (支持批量，一行一个链接)";
@@ -10974,25 +10977,36 @@ stats 是一个对象，包含以下数值（请根据角色身份合理赋初�
             showUiMultiPrompt(promptTitle, promptDesc, fields, (vals) => {
                 if(vals) {
                     if (currentAlbumTab === 'avatar') {
-                        if(vals[0]) {
-                            const g = vals[1] === '女' ? 'female' : 'male';
-                            const urls = vals[0].split('\n').map(u => u.trim()).filter(u => u);
-                            if (urls.length > 0) {
-                                urls.forEach(url => photoAlbum.avatars[g].push(url));
-                                renderAlbum();
-                                savePhotoAlbum();
-                                showUiAlert(`成功导入 ${urls.length} 张头像！`);
-                            }
+                        const g = vals[1] === '女' ? 'female' : 'male';
+                        let urls = [];
+                        if (vals[0]) {
+                            urls = vals[0].split('\n').map(u => u.trim()).filter(u => u && !u.startsWith('[本地图片'));
+                        }
+                        urls = urls.concat(uploadedImages);
+                        
+                        if (urls.length > 0) {
+                            urls.forEach(url => photoAlbum.avatars[g].push(url));
+                            renderAlbum();
+                            savePhotoAlbum();
+                            showUiAlert(`成功导入 ${urls.length} 张头像！`);
                         }
                     } else if (currentAlbumTab === 'sticker') {
-                        if(vals[0] && vals[1]) {
-                            photoAlbum.stickers.push({name: vals[0], url: vals[1]});
+                        let finalUrl = vals[1];
+                        if (uploadedImages.length > 0 && finalUrl.startsWith('[本地图片]')) {
+                            finalUrl = uploadedImages[0];
+                        }
+                        if(vals[0] && finalUrl) {
+                            photoAlbum.stickers.push({name: vals[0], url: finalUrl});
                             renderAlbum();
                             savePhotoAlbum();
                         }
                     } else if (currentAlbumTab === 'daily') {
-                        if(vals[0] && vals[1]) {
-                            photoAlbum.daily.push({desc: vals[0], url: vals[1]});
+                        let finalUrl = vals[1];
+                        if (uploadedImages.length > 0 && finalUrl.startsWith('[本地图片]')) {
+                            finalUrl = uploadedImages[0];
+                        }
+                        if(vals[0] && finalUrl) {
+                            photoAlbum.daily.push({desc: vals[0], url: finalUrl});
                             renderAlbum();
                             savePhotoAlbum();
                         }
@@ -11039,10 +11053,12 @@ stats 是一个对象，包含以下数值（请根据角色身份合理赋初�
                             const reader = new FileReader();
                             reader.onload = function(ev) {
                                 compressImage(ev.target.result, 256, 256, function(compressedBase64) {
+                                    uploadedImages.push(compressedBase64);
+                                    
                                     if (currentAlbumTab === 'avatar') {
-                                        urlInput.value = urlInput.value ? urlInput.value + '\n' + compressedBase64 : compressedBase64;
+                                        urlInput.value = urlInput.value ? urlInput.value + '\n[本地图片 ' + uploadedImages.length + ']' : '[本地图片 ' + uploadedImages.length + ']';
                                     } else {
-                                        urlInput.value = compressedBase64;
+                                        urlInput.value = '[本地图片]';
                                         if (nameInput && !nameInput.value) {
                                             nameInput.value = file.name.replace(/\.[^/.]+$/, "");
                                         }
