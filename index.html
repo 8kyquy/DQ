@@ -2337,7 +2337,7 @@
         </div>
 
         <!-- 飞博超话详情页 -->
-        <div class="schedule-page" id="feiboSuperTopicDetailPage" style="z-index: 66; background: #f5f5f5;">
+        <div class="schedule-page" id="feiboSuperTopicDetailPage" style="z-index: 68; background: #f5f5f5;">
             <div class="schedule-top-header" style="background: #fff; padding: 15px; border-bottom: 1px solid #eee; margin-bottom: 0; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
                 <button class="btn btn-cancel" style="padding: 6px 12px; font-size:13px; border:none; background:transparent; box-shadow:none; font-size:20px;" onclick="closeFeiboSuperTopicDetail()">❮</button>
                 <h2 style="color: #333; font-weight: 800; font-size: 16px; flex:1; text-align:center;" id="feiboSuperTopicTitle">超话</h2>
@@ -3483,6 +3483,31 @@
             if (uiMultiPromptCallback) uiMultiPromptCallback(vals);
         }
 
+        // 全局后台排队系统
+        let isStoryGenerating = false;
+        let actionQueue = [];
+
+        function showToast(msg, duration = 2000) {
+            const toast = document.createElement('div');
+            toast.style.cssText = 'position:fixed; top: 80px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: bold; z-index: 9999; transition: opacity 0.5s; text-align: center; pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 80%;';
+            toast.innerText = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 500);
+            }, duration);
+        }
+
+        async function processActionQueue() {
+            if (actionQueue.length > 0) {
+                showToast(`开始执行排队的 ${actionQueue.length} 个行动...`, 3000);
+                while (actionQueue.length > 0) {
+                    const action = actionQueue.shift();
+                    await callAIAction(action.location, action.actionName, action.actionDetail, true);
+                }
+            }
+        }
+
         // 全局时间和历史记录变量
         let currentDate = new Date(2024, 0, 1); // 初始时间：2024年1月1日 (月份从0开始算)
         let storyHistory = []; // 存储历史剧情的数组
@@ -3802,7 +3827,13 @@
             return `【最高优先级强制设定：底层数值规则】\n${sysRules}\n\n【最高优先级强制设定：当前世界设定】\n${worldSetting}\n${memoryStr}\n\n【玩家设定强制要求】\n玩家姓名：${playerName}\n玩家性别：${playerGender}\n${statusStr}${familyStr}${fanContext}\n1. 在生成任何剧情、互动、通告时，必须严格符合玩家的性别（绝对不能给男性安排女主通告，给女性安排男主通告）。\n2. 如果玩家处于怀孕状态，剧情中应频繁描写孕期反应或伴侣的照顾；如果有子女，可触发带娃日常或亲子综艺。\n3. 在描写剧情时，统一使用“你”来称呼玩家，增强代入感，绝对不要使用“玩家”或“星野”等默认称呼（除非是NPC直呼其名）！`;
         }
 
-        async function callAIAction(location, actionName, actionDetail) {
+        async function callAIAction(location, actionName, actionDetail, fromQueue = false) {
+            if (!fromQueue && isStoryGenerating) {
+                actionQueue.push({ location, actionName, actionDetail });
+                showToast(`⏳ 行动【${actionName}】已加入排队，将在周结算后执行`, 3000);
+                return;
+            }
+
             let url = localStorage.getItem('star_game_api_url');
             if (url && !url.endsWith('/chat/completions')) {
                 url = url.endsWith('/') ? url + 'chat/completions' : url + '/chat/completions';
@@ -3817,7 +3848,7 @@
                 return;
             }
 
-            showUiAlert('AI 正在演算中，请稍候...', '系统提示');
+            showToast(`AI 正在演算【${actionName}】...`, 3000);
 
             // 动态提取涉及的 NPC 档案
             const actionText = (location + ' ' + actionName + ' ' + (actionDetail || ''));
@@ -3937,7 +3968,6 @@ ${relatedNpcsInfo}
                     content = content.replace(/^```json/i, '').replace(/```$/i, '').trim();
                     
                     const result = JSON.parse(content);
-                    closeUiAlert();
                     
                     const board = document.getElementById('storyBoard');
                     const log = document.createElement('div');
@@ -4072,7 +4102,6 @@ ${relatedNpcsInfo}
                 }
             } catch (error) {
                 console.error(error);
-                closeUiAlert();
                 setTimeout(() => {
                     if (audioManager) audioManager.playError();
                     showUiAlert('AI 演算失败，请检查 API 配置或网络连接。\n' + error.message, '错误');
@@ -4552,9 +4581,9 @@ stats 是一个对象，包含以下数值（请根据角色身份合理赋初�
         function handlePregnancy(npc) {
             const playerGender = localStorage.getItem('star_game_player_gender') || '女';
             let target = null;
-            if (playerGender === '女' || playerGender.includes('双')) {
+            if (playerGender === '女' || (playerGender && playerGender.includes('双'))) {
                 target = 'player';
-            } else if (npc.gender === '女' || npc.gender.includes('双')) {
+            } else if (npc.gender === '女' || (npc.gender && npc.gender.includes('双'))) {
                 target = 'npc';
             } else {
                 showUiAlert("你们的性别无法自然受孕，系统将为你开启【领养/代孕】流程。");
@@ -4648,6 +4677,8 @@ stats 是一个对象，包含以下数值（请根据角色身份合理赋初�
                     board.innerHTML += `<div class="log-entry log-event" style="color:#f72585;">👶 【新生命降临】${parent1Name} 和 ${p2} 迎来了宝宝 ${result.name}！</div>`;
                     board.scrollTop = board.scrollHeight;
                     saveGame('auto', true);
+                } else {
+                    throw new Error('API 返回异常');
                 }
             } catch(e) {
                 closeUiAlert();
@@ -5332,7 +5363,11 @@ ${npcContext}
                         renderFeiboPostDetail();
                         showUiAlert(`成功生成了 ${addedCount} 条评论！`);
                         saveGame('auto', true);
+                    } else {
+                        throw new Error('未找到评论数组');
                     }
+                } else {
+                    throw new Error('API 返回异常');
                 }
             } catch (e) {
                 console.error("生成评论失败", e);
@@ -5425,7 +5460,8 @@ ${npcContext}
         function renderFeiboImage(imageStr) {
             if (!imageStr) return '';
             if (imageStr.startsWith('http') || imageStr.startsWith('data:image')) {
-                return `<div style="margin-top:10px;"><img src="${imageStr}" style="max-width:100%; border-radius:8px; border:1px solid #eee; cursor:pointer;" onclick="event.stopPropagation(); showPhantomImage('${imageStr}')"></div>`;
+                const safeUrl = imageStr.replace(/'/g, "\\'");
+                return `<div style="margin-top:10px;"><img src="${imageStr}" style="max-width:100%; border-radius:8px; border:1px solid #eee; cursor:pointer;" onclick="event.stopPropagation(); showPhantomImage('${safeUrl}')"></div>`;
             } else {
                 const safeStr = imageStr.replace(/'/g, "\\'");
                 return `<div style="margin-top:10px;"><div style="width: 100%; height: 150px; background: #eee; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #999; cursor: pointer; border: 1px solid #ddd;" onclick="event.stopPropagation(); showPhantomImage('${safeStr}')"><div style="font-size: 40px;">🖼️</div><div style="font-size: 12px; margin-top: 8px;">[幻视图片]</div></div></div>`;
@@ -5769,6 +5805,8 @@ ${currentStory}
                     } else {
                         throw new Error("JSON 格式不符");
                     }
+                } else {
+                    throw new Error('API 返回异常');
                 }
             } catch (e) {
                 console.error(e);
@@ -5974,7 +6012,11 @@ ${currentStory}
                         saveGame('auto', true);
                         closeUiAlert();
                         showUiAlert("✨ 桃宝已上新 6 件商品！");
+                    } else {
+                        throw new Error('API 返回的不是数组格式');
                     }
+                } else {
+                    throw new Error('API 返回异常');
                 }
             } catch (e) {
                 console.error(e);
@@ -6703,6 +6745,7 @@ ${npcContext}
 
         function toggleFeixinModal(show) {
             document.getElementById('feixinPage').style.display = show ? 'flex' : 'none';
+            if(!show) togglePhoneModal(true);
         }
 
         function renderFeixinContacts() {
@@ -7124,6 +7167,8 @@ ${npcContext}
                     closeUiAlert();
                     showUiAlert(`成功加入了群聊：${result.groupName}`);
                     saveGame('auto', true);
+                } else {
+                    throw new Error('API 返回异常');
                 }
             } catch (e) {
                 console.error(e);
@@ -7417,7 +7462,7 @@ ${npcContext}
                 
                 // 处理双击拍一拍和长按撤回，以及单击进入专属朋友圈
                 let avatarHtml = `<div class="chat-avatar" style="overflow:hidden; cursor:pointer;" 
-                    ondblclick="sendSpecialMessage('system', '&quot;${playerName}&quot; 拍了拍 ${isUser ? '自己' : '&quot;' + npc.name + '&quot;'}')" 
+                    ondblclick="sendSpecialMessage('system', '&quot;${playerName.replace(/'/g, "\\'")} &quot; 拍了拍 ${isUser ? '自己' : '&quot;' + npc.name.replace(/'/g, "\\'") + '&quot;'}')" 
                     onclick="${isUser ? '' : `openNpcMoments(${currentChatNpcIndex})`}"
                     >${isUser ? renderAvatar(playerAvatar) : renderAvatar(npc.avatar)}</div>`;
                 
@@ -7429,10 +7474,10 @@ ${npcContext}
                 // 如果是群聊且是NPC发的消息，尝试提取网名
                 if (npc.isGroup && !isUser && typeof rawContent === 'string') {
                     if (!msg.isSpecial) {
-                        // 匹配第一个冒号前的字符作为名字
-                        const match = rawContent.match(/^【?([^：:]+?)】?[:：]\s*([\s\S]*)$/);
+                        // 匹配第一个冒号前的字符作为名字（限制名字长度在20字以内，避免误杀长句）
+                        const match = rawContent.match(/^【?([^：:]{1,20}?)】?[:：]\s*([\s\S]*)$/);
                         // 过滤掉 http: 这种被误杀的情况
-                        if (match && !match[1].startsWith('http')) {
+                        if (match && !match[1].startsWith('http') && match[2].length > 0) {
                             groupMemberName = match[1].trim();
                             rawContent = match[2].trim();
                         }
@@ -8316,15 +8361,26 @@ ${recentHistory}
             // 计算综合权重的函数 (评分权重高一些，热度也占比)
             const getWeight = (item) => (parseFloat(item.score||0) * 500000) + (item.heat||0) + Math.random() * 100000;
 
-            if (awardName === '最佳男女主') {
-                let mWinner = currentNominations.nomData.male.sort((a,b) => getWeight(b) - getWeight(a))[0].name;
-                let fWinner = currentNominations.nomData.female.sort((a,b) => getWeight(b) - getWeight(a))[0].name;
-                winners['最佳男主'] = mWinner;
-                winners['最佳女主'] = fWinner;
-            } else {
-                let winKey = Object.keys(currentNominations.awards)[0];
-                let winner = currentNominations.nomData.sort((a,b) => getWeight(b) - getWeight(a))[0].name;
-                winners[winKey] = winner;
+            try {
+                if (awardName === '最佳男女主') {
+                    let maleArr = Array.isArray(currentNominations.nomData.male) ? [...currentNominations.nomData.male] : [];
+                    let femaleArr = Array.isArray(currentNominations.nomData.female) ? [...currentNominations.nomData.female] : [];
+                    if (maleArr.length === 0 || femaleArr.length === 0) { currentNominations = null; return; }
+                    let mWinner = maleArr.sort((a,b) => getWeight(b) - getWeight(a))[0].name;
+                    let fWinner = femaleArr.sort((a,b) => getWeight(b) - getWeight(a))[0].name;
+                    winners['最佳男主'] = mWinner;
+                    winners['最佳女主'] = fWinner;
+                } else {
+                    let winKey = Object.keys(currentNominations.awards)[0];
+                    let nomArr = Array.isArray(currentNominations.nomData) ? [...currentNominations.nomData] : [];
+                    if (nomArr.length === 0) { currentNominations = null; return; }
+                    let winner = nomArr.sort((a,b) => getWeight(b) - getWeight(a))[0].name;
+                    winners[winKey] = winner;
+                }
+            } catch(e) {
+                console.error("颁奖计算出错:", e);
+                currentNominations = null;
+                return;
             }
             
             awardHistory.unshift({
@@ -8745,7 +8801,8 @@ ${winnersText}
                 showUiConfirm(`【突发事件】\n${suitor.name} 突然把你约到了一个安静的地方，神情紧张又认真。\n\n“我不想再只做朋友了...你愿意和我在一起吗？”\n\n是否接受 ${suitor.name} 的告白？`, "💌 浪漫告白", (isAccept) => {
                     if (isAccept) {
                         suitor.relationship = '交往中';
-                        suitor.stats['好感度'] += 20;
+                        if (!suitor.stats) suitor.stats = {};
+                        suitor.stats['好感度'] = (suitor.stats['好感度'] || 0) + 20;
                         
                         // 触发饭圈脱粉回踩惩罚机制
                         const oldPurity = fanClub.purity;
@@ -8796,7 +8853,7 @@ ${winnersText}
 
         function triggerNextWeekProcess() {
             if (!localStorage.getItem('star_game_tutorial_next_week')) {
-                showUiConfirm('这是游戏的核心玩法！\n\n点击继续后，AI将根据你安排的行程，生成整整 7 天 的详细剧情与收益（包含属性变化、新通告、微博热搜等）。\n同时NPC也会自行推演他们的生活，甚至主动发朋友圈或找你聊天！\n\n⚠️ 【极度重要】：因为生成的数据量极大，可能需要等待 15~40 秒。在此期间请【绝对不要】刷新或关闭页面！\n\n是否确认开始演算？', '⏳ 行程演算说明', (res) => {
+                showUiConfirm('这是游戏的核心玩法！\n\n点击继续后，AI将根据你安排的行程，在【后台】生成整整 7 天 的详细剧情与收益。\n同时NPC也会自行推演他们的生活。\n\n💡 【全新机制】：生成期间你完全可以继续逛地图、刷飞博、聊天，互不影响！如果在地图里触发了交互，会自动排队等结算完执行。\n\n是否确认开始演算？', '⏳ 行程演算说明', (res) => {
                     if (res) {
                         localStorage.setItem('star_game_tutorial_next_week', '1');
                         executeNextWeek();
@@ -9011,24 +9068,27 @@ ${winnersText}
         }
 
         async function processWeeklyStory(validSchedules, completedJobs = [], currentScheduleArray = []) {
-            // 锁定 UI 队列，使用原生 DOM 修改来展示 Loading，避免和弹出对话框冲突
-            document.getElementById('uiAlertTitle').innerText = '系统提示';
-            document.getElementById('uiAlertMessage').innerText = 'AI 正在演算本周的详细行程与剧情，请耐心等待...\n（生成7天剧情需要较长时间）';
-            document.getElementById('uiAlertModal').style.display = 'flex';
-            document.querySelector('#uiAlertModal .modal-actions').style.display = 'none'; // 隐藏确定按钮
-            isUiShowing = true;
+            isStoryGenerating = true;
+            showToast('⏳ AI 正在后台演算本周剧情，您可以随意进行其他操作', 4000);
             
+            const board = document.getElementById('storyBoard');
+            const bgLog = document.createElement('div');
+            bgLog.className = 'log-entry log-sys';
+            bgLog.style.color = '#0077b6';
+            bgLog.innerText = '⏳ [系统] 正在后台推演世界线，请自由探索...';
+            board.appendChild(bgLog);
+            board.scrollTop = board.scrollHeight;
+
             let url = localStorage.getItem('star_game_api_url');
             if (url && !url.endsWith('/chat/completions')) url = url.endsWith('/') ? url + 'chat/completions' : url + '/chat/completions';
             const key = localStorage.getItem('star_game_api_key');
             const model = localStorage.getItem('star_game_model') || 'gpt-3.5-turbo';
             
             if (!url || !key) {
+                isStoryGenerating = false;
                 showUiAlert('请先配置API！');
                 return;
             }
-
-            const board = document.getElementById('storyBoard');
             
             // 构造每天的行程
             let dailySchedules = [];
@@ -9272,7 +9332,6 @@ ${dailySchedules.join('\n')}
                 }
             } catch(e) {
                 console.error("API 1 Error:", e);
-                document.getElementById('uiAlertMessage').innerText = '行程剧情与总结生成失败，已重试3次，请检查网络或API配置。';
                 const errLog = document.createElement('div');
                 errLog.className = 'log-entry log-sys';
                 errLog.innerText = '[系统] 行程剧情与总结生成失败。';
@@ -9281,7 +9340,6 @@ ${dailySchedules.join('\n')}
 
             // API 2: NPC自行推演与飞信主动消息
             if (npcList.length > 0) {
-                document.getElementById('uiAlertMessage').innerText = '正在进行NPC世界线推演与社交动态...';
                 
                 const recentMoments = feixinMoments.slice(0, 5).map((m, i) => {
                     return `[索引${i}] ${m.name}: ${m.content} (已有评论: ${m.comments ? m.comments.map(c=>c.name+':'+c.content).join('; ') : '无'})`;
@@ -9563,19 +9621,24 @@ ${recentMoments || '无'}
 
             // API 6: 作品上映与热度评价 (实时热榜)
             if (completedJobs && completedJobs.length > 0) {
-                document.getElementById('uiAlertMessage').innerText = '正在生成作品上映热度与路人评价...';
                 for (let job of completedJobs) {
                     await generateWorkFeedback(job);
                 }
             }
 
-            document.querySelector('#uiAlertModal .modal-actions').style.display = 'flex'; // 恢复确定按钮
-            document.getElementById('uiAlertModal').style.display = 'none';
-            isUiShowing = false;
-            processUiQueue(); // 释放队列，弹出期间积压的通告确认框等
+            isStoryGenerating = false;
+            const doneLog = document.createElement('div');
+            doneLog.className = 'log-entry log-sys';
+            doneLog.style.color = '#2b9348';
+            doneLog.innerText = '✅ [系统] 本周世界线推演完成！';
+            board.appendChild(doneLog);
+            board.scrollTop = board.scrollHeight;
+            
+            showToast('✅ 本周剧情演算完成！', 3000);
             
             processFeiboAI();
             saveGame('auto', true);
+            processActionQueue(); // 处理期间积压的请求
         }
 
         async function generateWorkFeedback(job) {
@@ -10133,6 +10196,8 @@ ${recentMoments || '无'}
                     renderNpcList();
                     closeUiAlert();
                     showUiAlert(`结识新角色：${baseNpc.name}！已加入社交列表。`);
+                } else {
+                    throw new Error('API 返回异常');
                 }
             } catch(e) {
                 console.error(e);
@@ -10479,7 +10544,7 @@ ${postsContent}
             playerMoney = 10000;
             playerStats = {
                 "台词": 10, "武术": 10, "情商": 50, "表演": 10, "声乐": 10, "舞蹈": 10, "颜值": 80, "形体": 50, "气质": 50, "时尚": 10,
-                "知名度": 0, "国民度": 0, "路人缘": 50, "人气": 0, "商业价值": 0, "口碑": 0, "健康": 100, "心情": 100
+                "知名度": 0, "国民度": 0, "路人缘": 50, "人气": 0, "商业价值": 0, "口碑": 0, "健康": 100, "心情": 100, "状态": "健康", "怀孕周期": 0
             };
             fanClub = { combat: 100, krypton: 100, purity: 50 };
             
@@ -11038,12 +11103,13 @@ stats 是一个对象，包含以下数值（请根据角色身份合理赋初�
                     btn.id = 'albumLocalUploadBtn';
                     btn.className = 'btn';
                     btn.style.cssText = 'flex: 1; background: var(--accent-blue); color: var(--text-color); padding: 8px; font-size: 13px;';
-                    btn.innerText = currentAlbumTab === 'avatar' ? '📁 批量选择本地图片' : '📁 选择本地图片';
+                    btn.innerText = currentAlbumTab === 'avatar' ? '📁 选择本地图片 (可多次添加)' : '📁 选择本地图片';
                     
                     const fileInput = document.createElement('input');
                     fileInput.type = 'file';
                     fileInput.accept = 'image/*';
-                    if (currentAlbumTab === 'avatar') fileInput.multiple = true;
+                    // App WebView 中 multiple 属性可能不被支持，统一使用单选模式
+                    // 头像库通过重复点击按钮来实现多次添加
                     fileInput.style.display = 'none';
                     
                     fileInput.onchange = (e) => {
@@ -11054,39 +11120,71 @@ stats 是一个对象，包含以下数值（请根据角色身份合理赋初�
                         btn.disabled = true;
                         
                         let processed = 0;
+                        const totalFiles = files.length;
                         let urlInput = document.getElementById('multiPromptInput_' + urlInputIndex);
                         let nameInput = nameInputIndex !== -1 ? document.getElementById('multiPromptInput_' + nameInputIndex) : null;
                         
-                        for (let i = 0; i < files.length; i++) {
-                            const file = files[i];
-                            if (!file.type.startsWith('image/')) {
-                                processed++;
-                                continue;
-                            }
-                            const reader = new FileReader();
-                            reader.onload = function(ev) {
-                                compressImage(ev.target.result, 256, 256, function(compressedBase64) {
-                                    if (currentAlbumTab === 'avatar') {
-                                        urlInput.value = urlInput.value ? urlInput.value + '\n' + compressedBase64 : compressedBase64;
-                                    } else {
-                                        urlInput.value = compressedBase64;
-                                        if (nameInput && !nameInput.value) {
-                                            nameInput.value = file.name.replace(/\.[^/.]+$/, "");
-                                        }
-                                    }
-                                    processed++;
-                                    if (processed === files.length) {
-                                        btn.innerText = '✅ 处理完成';
-                                        btn.style.background = 'var(--accent-beige)';
-                                        btn.disabled = false;
-                                    }
-                                });
-                            };
-                            reader.readAsDataURL(file);
+                        if (!urlInput) {
+                            btn.innerText = '❌ 输入框未找到';
+                            btn.disabled = false;
+                            return;
                         }
+                        
+                        const processFile = (file) => {
+                            return new Promise((resolve) => {
+                                if (!file || !file.type || !file.type.startsWith('image/')) {
+                                    resolve();
+                                    return;
+                                }
+                                const reader = new FileReader();
+                                reader.onerror = function() {
+                                    console.error('FileReader 读取失败:', file.name);
+                                    resolve();
+                                };
+                                reader.onload = function(ev) {
+                                    try {
+                                        compressImage(ev.target.result, 256, 256, function(compressedBase64) {
+                                            if (currentAlbumTab === 'avatar') {
+                                                // 头像库：追加到 textarea
+                                                const currentVal = urlInput.value || '';
+                                                urlInput.value = currentVal ? currentVal + '\n' + compressedBase64 : compressedBase64;
+                                            } else {
+                                                urlInput.value = compressedBase64;
+                                                if (nameInput && !nameInput.value) {
+                                                    nameInput.value = file.name.replace(/\.[^/.]+$/, "") || '本地图片';
+                                                }
+                                            }
+                                            resolve();
+                                        });
+                                    } catch(err) {
+                                        console.error('压缩图片失败:', err);
+                                        resolve();
+                                    }
+                                };
+                                reader.readAsDataURL(file);
+                            });
+                        };
+                        
+                        // 串行处理所有文件，避免并发导致 WebView 崩溃
+                        (async () => {
+                            for (let i = 0; i < totalFiles; i++) {
+                                await processFile(files[i]);
+                                processed++;
+                                btn.innerText = `压缩中 (${processed}/${totalFiles})...`;
+                            }
+                            btn.innerText = currentAlbumTab === 'avatar' ? '✅ 处理完成 (可继续选择)' : '✅ 处理完成';
+                            btn.style.background = 'var(--accent-beige)';
+                            btn.disabled = false;
+                            // 重置 fileInput 的 value，确保同一文件可以重复选择
+                            fileInput.value = '';
+                        })();
                     };
                     
-                    btn.onclick = () => fileInput.click();
+                    btn.onclick = () => {
+                        // 重置 value 确保 onchange 每次都能触发
+                        fileInput.value = '';
+                        fileInput.click();
+                    };
                     
                     wrapper.appendChild(btn);
                     wrapper.appendChild(fileInput);
@@ -11276,7 +11374,8 @@ stats 是一个对象，包含以下数值（请根据角色身份合理赋初�
                 playerBirthday: localStorage.getItem('star_game_player_birthday'),
                 playerAge: localStorage.getItem('star_game_player_age'),
                 playerHeight: localStorage.getItem('star_game_player_height'),
-                playerRole: localStorage.getItem('star_game_player_role')
+                playerRole: localStorage.getItem('star_game_player_role'),
+                playerAvatar: localStorage.getItem('star_game_player_avatar')
             };
             localStorage.setItem('star_game_save_' + slot, JSON.stringify(saveData));
             
@@ -11328,6 +11427,7 @@ stats 是一个对象，包含以下数值（请根据角色身份合理赋初�
                 if (data.playerAge) localStorage.setItem('star_game_player_age', data.playerAge);
                 if (data.playerHeight) localStorage.setItem('star_game_player_height', data.playerHeight);
                 if (data.playerRole) localStorage.setItem('star_game_player_role', data.playerRole);
+                if (data.playerAvatar) localStorage.setItem('star_game_player_avatar', data.playerAvatar);
 
                 // 关闭所有可能打开的弹窗和页面
                 toggleSaveLoadModal(false);
