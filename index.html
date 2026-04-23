@@ -3929,8 +3929,9 @@ ${relatedNpcsInfo}
   "stats_changes": [
     {"stat": "演技", "value": 20},
     {"stat": "知名度", "value": 1000},
-    {"stat": "金钱", "value": -1000}
-  ], // 基础属性每次增减10-50，进阶属性每次增减在 300 到 8000 之间。如果没有属性变化，设为 []
+    {"stat": "金钱", "value": -1000},
+    {"stat": "心情", "value": 10}
+  ], // 基础属性每次增减10-50，进阶属性每次增减在 300 到 8000 之间，健康和心情(上限100)每次增减5-20。如果没有属性变化，设为 []
   "hot_search": {
     "title": "热搜标题",
     "trend": "up" // "up"表示正面热搜，"down"表示负面热搜，"hot"表示爆款热搜
@@ -4028,7 +4029,11 @@ ${relatedNpcsInfo}
                                 if (update.事业心变动) npc.stats['事业心'] = (npc.stats['事业心'] || 0) + update.事业心变动;
                                 if (update.道德变动) npc.stats['道德'] = (npc.stats['道德'] || 0) + update.道德变动;
                                 if (update.智力变动) npc.stats['智力'] = (npc.stats['智力'] || 0) + update.智力变动;
-                                if (update.钟情 && update.钟情 !== "null") npc.stats['钟情'] = update.钟情;
+                                let zqStr = '';
+                                if (update.钟情 && update.钟情 !== "null" && update.钟情 !== npc.stats['钟情']) {
+                                    npc.stats['钟情'] = update.钟情;
+                                    zqStr = `，钟情于[${update.钟情}]`;
+                                }
                                 let relStr = '';
                                 if (update.relationship && update.relationship !== "null" && update.relationship !== npc.relationship) {
                                     npc.relationship = update.relationship;
@@ -4039,7 +4044,6 @@ ${relatedNpcsInfo}
                                     npc.stats['心境详情'] = update.心境详情 || '';
                                 }
                                 let favorStr = update.好感度变动 ? `好感${update.好感度变动 > 0 ? '+'+update.好感度变动 : update.好感度变动}` : '';
-                                let zqStr = (update.钟情 && update.钟情 !== "null") ? `，钟情于[${update.钟情}]` : '';
                                 htmlContent += `<br><span style="color:#0077b6; font-weight:800; font-size:13px; display:inline-block; margin-top:6px;">💭 [${npc.name} 状态] ${favorStr}，心境：${update.心境}${zqStr}${relStr}</span>`;
                             }
                         });
@@ -4066,10 +4070,11 @@ ${relatedNpcsInfo}
                         result.job.reward = result.job.reward || 0;
                         // 自动捕获影视剧阵容
                         if (result.job.type && (result.job.type.includes('电影') || result.job.type.includes('电视') || result.job.type.includes('网剧'))) {
-                            const males = npcList.filter(n => n.gender === '男' && !n.isGroup).sort(() => 0.5 - Math.random());
-                            const females = npcList.filter(n => n.gender === '女' && !n.isGroup).sort(() => 0.5 - Math.random());
-                            const getM = (idx) => males[idx] ? males[idx].name : '神秘男星';
-                            const getF = (idx) => females[idx] ? females[idx].name : '神秘女星';
+                            const males = Array.from(new Set(npcList.filter(n => n.gender === '男' && !n.isGroup).map(n => n.name))).sort(() => 0.5 - Math.random());
+                            const females = Array.from(new Set(npcList.filter(n => n.gender === '女' && !n.isGroup).map(n => n.name))).sort(() => 0.5 - Math.random());
+                            let mCount = 1, fCount = 1;
+                            const getM = (idx) => males[idx] ? males[idx] : `神秘男星${mCount++}`;
+                            const getF = (idx) => females[idx] ? females[idx] : `神秘女星${fCount++}`;
                             let roles = { '男主': getM(0), '女主': getF(0), '男二': getM(1), '女二': getF(1), '男配': getM(2), '女配': getF(2) };
                             const pName = localStorage.getItem('star_game_player_name') || '星野';
                             if (result.job.recruit_role && roles[result.job.recruit_role]) {
@@ -9046,6 +9051,23 @@ ${winnersText}
             
             // 结算通告进度与报酬
             let completedJobs = [];
+            let failedJobs = [];
+            
+            // 检查过期
+            currentJobs = currentJobs.filter(job => {
+                if (job.deadline && job.deadline !== '不限') {
+                    const match = job.deadline.match(/(\d{4})年(\d{1,2})月(?:(\d{1,2})日)?/);
+                    if (match) {
+                        const dlDate = new Date(parseInt(match[1]), parseInt(match[2])-1, match[3] ? parseInt(match[3]) : 28);
+                        if (currentDate > dlDate) {
+                            failedJobs.push(job);
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            });
+
             currentJobs.forEach(job => {
                 const activityName = '🎬 ' + job.name;
                 const count = scheduleArray.filter(item => item === activityName).length;
@@ -9057,6 +9079,45 @@ ${winnersText}
                     }
                 }
             });
+
+            if (failedJobs.length > 0) {
+                if (audioManager) audioManager.playError();
+                let failLog = '[系统] ⚠️ 以下通告已逾期未完成，算作违约：<br>';
+                const playerName = localStorage.getItem('star_game_player_name') || '星野';
+                failedJobs.forEach(job => {
+                    let penaltyAmount = 0;
+                    if (job.penalty && job.penalty !== '无') {
+                        const numMatch = job.penalty.match(/(\d+)(万|千)?/);
+                        if (numMatch) {
+                            penaltyAmount = parseInt(numMatch[1]);
+                            if (numMatch[2] === '万') penaltyAmount *= 10000;
+                            else if (numMatch[2] === '千') penaltyAmount *= 1000;
+                        }
+                    }
+                    if (penaltyAmount === 0 && job.reward) {
+                        penaltyAmount = job.reward; // 如果没写明违约金，默认赔偿等额报酬
+                    }
+                    updatePlayerStat('金钱', -penaltyAmount);
+                    updatePlayerStat('口碑', -300);
+                    updatePlayerStat('路人缘', -300);
+                    failLog += `❌ 《${job.name}》 (扣除违约金: 💰${penaltyAmount}，口碑、路人缘大跌)<br>`;
+                    
+                    // 强制掉落负面违约热搜
+                    feiboHotSearches.push({ 
+                        rank: 1, 
+                        title: `${playerName} 违约《${job.name}》`, 
+                        tag: "沸", 
+                        tagColor: "#d00000", 
+                        heat: Math.floor(Math.random() * 50000 + 50000), 
+                        trend: 'down' 
+                    });
+                });
+                const failLogDiv = document.createElement('div');
+                failLogDiv.className = 'log-entry log-sys';
+                failLogDiv.style.color = '#d00000';
+                failLogDiv.innerHTML = failLog;
+                board.appendChild(failLogDiv);
+            }
 
             if (completedJobs.length > 0) {
                 if (audioManager) audioManager.playSuccess();
@@ -9230,7 +9291,7 @@ ${dailySchedules.join('\n')}
       "date": "2024/1/1", // 填入具体日期
       "story": "剧情内容...",
       "rewards": {
-        "stats_changes": [{"stat": "演技", "value": 20}, {"stat": "知名度", "value": 1000}], // 基础属性(上限1000)每次增减10-50，进阶属性每次增减在 300 到 8000 之间。如果没有则为空数组 []
+        "stats_changes": [{"stat": "演技", "value": 20}, {"stat": "知名度", "value": 1000}, {"stat": "健康", "value": -10}, {"stat": "心情", "value": 15}], // 基础属性(上限1000)每次增减10-50，进阶属性每次增减在 300 到 8000 之间。健康和心情(上限100)根据行程高强度扣减或休息娱乐增加(5-20)。如果没有则为空数组 []
         "hot_search": {"title": "热搜标题(必须包含具体人名/剧名，如正面热搜“${playerName} 绝美生图”，禁用xxx)", "trend": "up/down/hot"}, // 15%概率掉落玩家热搜，10%概率掉落NPC热搜。如果没有则为 null
         // 请务必根据下方 memos 记事内容来合理评估并增减NPC的以下属性：
         "npc_stats_updates": [
@@ -9329,13 +9390,16 @@ ${dailySchedules.join('\n')}
                                                 npc.relationship = update.relationship;
                                                 relStr = `，关系变更为[${update.relationship}]`;
                                             }
-                                            if (update.钟情 && update.钟情 !== "null") npc.stats['钟情'] = update.钟情;
+                                            let zqStr = '';
+                                            if (update.钟情 && update.钟情 !== "null" && update.钟情 !== npc.stats['钟情']) {
+                                                npc.stats['钟情'] = update.钟情;
+                                                zqStr = `，钟情于[${update.钟情}]`;
+                                            }
                                             if (update.心境) {
                                                 npc.stats['心境'] = update.心境;
                                                 npc.stats['心境详情'] = update.心境详情 || '';
                                             }
                                             let favorStr = update.好感度变动 ? `好感${update.好感度变动 > 0 ? '+'+update.好感度变动 : update.好感度变动}` : '';
-                                            let zqStr = (update.钟情 && update.钟情 !== "null") ? `，钟情于[${update.钟情}]` : '';
                                             htmlContent += `<br><span style="color:#0077b6; font-weight:800; font-size:13px; display:inline-block; margin-top:6px;">💭 [${npc.name} 状态] ${favorStr}，心境：${update.心境}${zqStr}${relStr}</span>`;
                                         }
                                     });
@@ -9399,10 +9463,11 @@ ${dailySchedules.join('\n')}
                         result1.job.reward = result1.job.reward || 0;
                         // 自动捕获影视剧阵容
                         if (result1.job.type && (result1.job.type.includes('电影') || result1.job.type.includes('电视') || result1.job.type.includes('网剧'))) {
-                            const males = npcList.filter(n => n.gender === '男' && !n.isGroup).sort(() => 0.5 - Math.random());
-                            const females = npcList.filter(n => n.gender === '女' && !n.isGroup).sort(() => 0.5 - Math.random());
-                            const getM = (idx) => males[idx] ? males[idx].name : '神秘男星';
-                            const getF = (idx) => females[idx] ? females[idx].name : '神秘女星';
+                            const males = Array.from(new Set(npcList.filter(n => n.gender === '男' && !n.isGroup).map(n => n.name))).sort(() => 0.5 - Math.random());
+                            const females = Array.from(new Set(npcList.filter(n => n.gender === '女' && !n.isGroup).map(n => n.name))).sort(() => 0.5 - Math.random());
+                            let mCount = 1, fCount = 1;
+                            const getM = (idx) => males[idx] ? males[idx] : `神秘男星${mCount++}`;
+                            const getF = (idx) => females[idx] ? females[idx] : `神秘女星${fCount++}`;
                             let roles = { '男主': getM(0), '女主': getF(0), '男二': getM(1), '女二': getF(1), '男配': getM(2), '女配': getF(2) };
                             const pName = localStorage.getItem('star_game_player_name') || '星野';
                             if (result1.job.recruit_role && roles[result1.job.recruit_role]) {
@@ -9445,11 +9510,12 @@ ${dailySchedules.join('\n')}
                     return `[索引${i}] ${m.name}: ${m.content} (已有评论: ${m.comments ? m.comments.map(c=>c.name+':'+c.content).join('; ') : '无'})`;
                 }).join('\n');
 
+                const activeNpcs = npcList.filter(n => !n.isGroup).sort(() => 0.5 - Math.random()).slice(0, 6);
                 const prompt2 = `${getGlobalPromptContext()}\n本周时间流逝，请让娱乐圈的NPC们自行推演他们的生活，并进行社交互动。当前玩家姓名：${playerName}。
 【⚠️核心要求】：推演内容和发布的动态必须严格符合该NPC的详细设定（表里性格、说话风格等）。禁止出现过度黑暗、血腥、暴力、厌世或自毁的情节！
 
 从以下NPC中挑选 2-3 位进行深度推演：
-${npcList.filter(n=>!n.isGroup).map(n=>`${n.name}(${n.title}) - 设定：${n.desc}`).join('\n')}
+${activeNpcs.map(n=>`${n.name}(${n.title}) - 设定：${n.desc}`).join('\n')}
 
 （全网通讯录可用名字参考：${npcList.filter(n=>!n.isGroup).map(n=>n.name).join('、')}）
 
@@ -9462,7 +9528,7 @@ ${recentMoments || '无'}
 3. 【桃色与怀孕】女性NPC有概率发生桃色事件或意外怀孕（约30%概率）。怀孕期间如果继续高强度工作可能导致流产。
 4. 【概率触发】有一定概率在社交平台（飞博）或自己的超话中发布一条动态。如果不发则设为 null；如果发了，必须自动生成至少 6 条网友评论，且评论必须包含楼中楼回复（replies）。【⚠️注意：如果该NPC与玩家是“交往中/已婚”，极大概率发布秀恩爱或吃醋动态；如果是“黑化”，极大概率发布内涵、拉踩玩家的黑通稿！】
 5. 【概率触发】随机挑选 0-2 位玩家认识的NPC主动给玩家发送飞信消息。一次可以发送多条连续的短消息（以数组形式）。【⚠️注意：如果是“交往中”，必须发黏人、查岗或约会的消息；如果是“黑化”，必须发阴阳怪气或威胁的消息。】
-6. 随机生成 0 到 1 部本周上映的圈内新作（如电视剧、电影、新歌等）。【⚠️注意：主演和导演请从全网通讯录中随机挑选，不要老是只用同一个NPC的名字！】并附带初始热度、评分和路人评价。
+6. 随机生成 0 到 1 部本周上映的圈内新作（类型请在：电视剧、电影、网剧、微短剧、音乐专辑、个人单曲、常驻综艺、实体杂志 中随机选择，【⚠️极度重要：请务必保证作品类型的多样性，不要总是只生成电影和电视剧！】）。【⚠️注意：主演和导演请从全网通讯录中随机挑选，不要老是只用同一个NPC的名字！】并附带初始热度、评分和路人评价。
 7. 【朋友圈动态】NPC有概率在飞信朋友圈发布动态（带配图或纯文本）。
 8. 【朋友圈互动】如果玩家最近发布了朋友圈，或者评论了NPC的朋友圈，相关NPC必须在朋友圈进行点赞或评论回复。
 9. 【剧宣动态】如果该NPC有近期上映的作品，有概率在飞博发布剧宣动态，并在 \`npc_evolutions\` 的 \`feibo_post\` 中体现。同时返回 \`work_heat_up\` 字段（如 50000）和 \`work_name\` 字段，表示该作品因剧宣增加的热度值。
@@ -9474,8 +9540,8 @@ ${recentMoments || '无'}
   ], // 如果不发消息，设为 []
   "new_work": {
     "name": "作品名称",
-    "type": "电视剧/电影/音乐/网剧/综艺",
-    "desc": "作品剧情简介",
+    "type": "电视剧/电影/个人单曲/音乐专辑/常驻综艺/网剧/实体杂志",
+    "desc": "作品剧情简介或内容说明",
     "lineup": "主演NPC名字",
     "director": "导演名字",
     "heat": 560000,
@@ -9569,6 +9635,33 @@ ${recentMoments || '无'}
                         // 处理NPC新作品上映
                         if (result2.new_work && result2.new_work.name) {
                             const nw = result2.new_work;
+                            
+                            // 自动捕获影视剧阵容，保证不重复且丰富
+                            if (nw.type && (nw.type.includes('电影') || nw.type.includes('电视') || nw.type.includes('网剧') || nw.type.includes('短剧'))) {
+                                const males = Array.from(new Set(npcList.filter(n => n.gender === '男' && !n.isGroup).map(n => n.name))).sort(() => 0.5 - Math.random());
+                                const females = Array.from(new Set(npcList.filter(n => n.gender === '女' && !n.isGroup).map(n => n.name))).sort(() => 0.5 - Math.random());
+                                let mCount = 1, fCount = 1;
+                                const getM = (idx) => males[idx] ? males[idx] : `神秘男星${mCount++}`;
+                                const getF = (idx) => females[idx] ? females[idx] : `神秘女星${fCount++}`;
+                                let roles = { '男主': getM(0), '女主': getF(0), '男二': getM(1), '女二': getF(1), '男配': getM(2), '女配': getF(2) };
+                                
+                                // 尽量把 AI 指定的主演保留到男女主中
+                                if (nw.lineup) {
+                                    const aiLineup = nw.lineup.split(/[、/]/);
+                                    if (aiLineup[0]) {
+                                        const npc = npcList.find(n => n.name === aiLineup[0].trim());
+                                        if (npc && npc.gender === '男') roles['男主'] = npc.name;
+                                        else if (npc && npc.gender === '女') roles['女主'] = npc.name;
+                                    }
+                                    if (aiLineup[1]) {
+                                        const npc = npcList.find(n => n.name === aiLineup[1].trim());
+                                        if (npc && npc.gender === '男' && roles['男主'] !== npc.name) roles['男二'] = npc.name;
+                                        else if (npc && npc.gender === '女' && roles['女主'] !== npc.name) roles['女二'] = npc.name;
+                                    }
+                                }
+                                nw.lineup = `男主:${roles['男主']}/女主:${roles['女主']}/男二:${roles['男二']}/女二:${roles['女二']}/男配:${roles['男配']}/女配:${roles['女配']}`;
+                            }
+
                             publishedWorks.push({
                                 name: nw.name,
                                 type: nw.type,
@@ -9597,7 +9690,7 @@ ${recentMoments || '无'}
                                     if (!npc.stats) npc.stats = {};
                                     let changesStr = [];
                                     // 移除了NPC推演时的数值变动
-                                    if (evo.zhongqing && evo.zhongqing !== 'null') {
+                                    if (evo.zhongqing && evo.zhongqing !== 'null' && evo.zhongqing !== npc.stats['钟情']) {
                                         npc.stats['钟情'] = evo.zhongqing;
                                         changesStr.push(`钟情于[${evo.zhongqing}]`);
                                     }
