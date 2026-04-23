@@ -1405,7 +1405,7 @@
                 </div>
                 <div class="input-group" style="text-align: left; margin-top: 10px;">
                     <label>声音设置</label>
-                    <button class="btn" id="soundToggleBtn" onclick="toggleSound()" style="width:100%; background: var(--accent-beige); font-weight: 800;">音效与音乐：开</button>
+                    <button class="btn" id="soundToggleBtn" onclick="toggleSound()" style="width:100%; background: var(--accent-beige); font-weight: 800;">音效：开</button>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 15px; margin-top: 20px;">
                     <button class="btn" style="background: var(--accent-blue);" onclick="openSaveLoadFromSettings()">存档 / 读档</button>
@@ -3174,15 +3174,12 @@
         const audioManager = {
             ctx: null,
             isMuted: false,
-            bgmIndex: 0,
-            bgmInterval: null,
             
             init() {
                 if (this.ctx) return;
                 const AudioContext = window.AudioContext || window.webkitAudioContext;
                 if (AudioContext) {
                     this.ctx = new AudioContext();
-                    this.startBgm();
                 }
             },
             
@@ -3225,18 +3222,6 @@
                 this.playTone(300, 'sawtooth', 0.2, 0.05);
                 setTimeout(() => this.playTone(250, 'sawtooth', 0.3, 0.05), 150);
             },
-            
-            startBgm() {
-                if (this.bgmInterval) return;
-                this.bgmInterval = setInterval(() => {
-                    if (this.isMuted || !this.ctx || this.ctx.state !== 'running') return;
-                    // 简单的 C和弦 琶音，作为轻柔的背景音乐
-                    const notes = [261.63, 329.63, 392.00, 523.25, 392.00, 329.63];
-                    const note = notes[this.bgmIndex % notes.length];
-                    this.playTone(note, 'sine', 2.0, 0.015); // 极低音量
-                    this.bgmIndex++;
-                }, 1500);
-            },
 
             toggleMute() {
                 this.isMuted = !this.isMuted;
@@ -3259,10 +3244,10 @@
             const isMuted = audioManager.toggleMute();
             const btn = document.getElementById('soundToggleBtn');
             if (isMuted) {
-                btn.innerText = '音效与音乐：关';
+                btn.innerText = '音效：关';
                 btn.style.background = '#e5e5e5';
             } else {
-                btn.innerText = '音效与音乐：开';
+                btn.innerText = '音效：开';
                 btn.style.background = 'var(--accent-beige)';
             }
         }
